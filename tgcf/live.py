@@ -128,6 +128,7 @@ async def start_sync() -> None:
         CONFIG.login.API_ID,
         CONFIG.login.API_HASH,
         sequential_updates=CONFIG.live.sequential_updates,
+        flood_sleep_threshold=60,
     )
     if CONFIG.login.user_type == 0:
         if CONFIG.login.BOT_TOKEN == "":
