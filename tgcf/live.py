@@ -3,6 +3,7 @@
 import logging
 import os
 import sys
+import asyncio  # Added to handle delays between forwards
 from typing import Union
 
 from telethon import TelegramClient, events, functions, types
@@ -50,8 +51,16 @@ async def new_message_handler(event: Union[Message, events.NewMessage]) -> None:
     for d in dest:
         if event.is_reply and r_event_uid in st.stored:
             tm.reply_to = st.stored.get(r_event_uid).get(d)
-        fwded_msg = await send_message(d, tm)
-        st.stored[event_uid].update({d: fwded_msg})
+        
+        # Wrapped in a try-except and added a delay to prevent 6-retry crashes
+        try:
+            fwded_msg = await send_message(d, tm)
+            st.stored[event_uid].update({d: fwded_msg})
+            # Wait 2 seconds before forwarding to the next channel in your list
+            await asyncio.sleep(2) 
+        except Exception as e:
+            logging.error(f"Error forwarding to {d}: {e}")
+            
     tm.clear()
 
 
@@ -82,12 +91,14 @@ async def edited_message_handler(event) -> None:
                 await message.delete()
             else:
                 await msg.edit(tm.text)
+                await asyncio.sleep(1) # Small delay for edits
         return
 
     dest = config.from_to.get(chat_id)
 
     for d in dest:
         await send_message(d, tm)
+        await asyncio.sleep(1)
     tm.clear()
 
 
@@ -104,6 +115,7 @@ async def deleted_message_handler(event):
     if fwded_msgs:
         for _, msg in fwded_msgs.items():
             await msg.delete()
+            await asyncio.sleep(0.5) # Anti-flood delay for deletions
         return
 
 
@@ -123,13 +135,16 @@ async def start_sync() -> None:
     await load_async_plugins()
 
     SESSION = get_SESSION()
+    
+    # Optimized client settings for large batches and Render stability
     client = TelegramClient(
         SESSION,
         CONFIG.login.API_ID,
         CONFIG.login.API_HASH,
-        sequential_updates=CONFIG.live.sequential_updates,
-        flood_sleep_threshold=60,
+        sequential_updates=True, # Processes messages one by one to save RAM
+        flood_sleep_threshold=60, # Automatically waits up to 60s for FloodWaits
     )
+    
     if CONFIG.login.user_type == 0:
         if CONFIG.login.BOT_TOKEN == "":
             logging.warning("Bot token not found, but login type is set to bot.")
@@ -137,6 +152,7 @@ async def start_sync() -> None:
         await client.start(bot_token=CONFIG.login.BOT_TOKEN)
     else:
         await client.start()
+        
     config.is_bot = await client.is_bot()
     logging.info(f"config.is_bot={config.is_bot}")
     command_events = get_events()
@@ -164,3 +180,4 @@ async def start_sync() -> None:
         )
     config.from_to = await config.load_from_to(client, config.CONFIG.forwards)
     await client.run_until_disconnected()
+
